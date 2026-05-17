@@ -17,6 +17,7 @@ Usage:
 import argparse
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import anthropic
@@ -44,7 +45,7 @@ from sentence_transformers import SentenceTransformer
 
 DEFAULT_MODEL  = "claude-haiku-4-5-20251001"
 MAX_TOKENS     = 2048
-MAX_TOOL_ROUNDS = 3   # max additional retrieve() round-trips the agent may make
+MAX_TOOL_ROUNDS = 5   # max additional retrieve() round-trips the agent may make
 
 # ── Prompts ────────────────────────────────────────────────────────────────────
 
@@ -60,6 +61,8 @@ You are an expert on the NBA Collective Bargaining Agreement (2023).
 You are given initial CBA excerpts relevant to the question.
 If those excerpts reference other sections you need for a complete answer,
 or if the initial context is insufficient, use the retrieve tool to look them up.
+When you need multiple lookups, issue them all in the same message — they run in parallel.
+Retrieve only what is genuinely missing from the provided excerpts; avoid redundant or speculative searches.
 Answer accurately using only information from CBA excerpts (provided or retrieved).
 Cite the article and section for every claim you make.
 If you cannot find the information after searching, say so.\
@@ -135,7 +138,7 @@ def generate(
 def rag(
     question: str,
     *,
-    top_k: int = 7,
+    top_k: int = 10,
     model: str = DEFAULT_MODEL,
     embed_model=None,
     bm25=None,
@@ -163,7 +166,7 @@ def rag(
 def rag_agentic(
     question: str,
     *,
-    top_k: int = 7,
+    top_k: int = 10,
     model: str = DEFAULT_MODEL,
     embed_model=None,
     bm25=None,
@@ -214,12 +217,29 @@ def rag_agentic(
         # On the final round, withhold the tool so Claude must produce an answer.
         offer_tools = round_num < MAX_TOOL_ROUNDS
 
+        # Before the forced-answer round, append an explicit summary instruction to
+        # the last user turn so Claude knows it should produce text, not call a tool.
+        if not offer_tools and tool_calls_made > 0:
+            last_content = messages[-1]["content"]
+            if isinstance(last_content, list):
+                last_content.append({
+                    "type": "text",
+                    "text": (
+                        "You have now retrieved all the relevant CBA sections. "
+                        "Please provide a complete, well-organized answer to the original "
+                        "question based on the excerpts above."
+                    ),
+                })
+
+        create_kwargs: dict = {}
+        if offer_tools:
+            create_kwargs["tools"] = [RETRIEVE_TOOL]
         response = client.messages.create(
             model=model,
             max_tokens=MAX_TOKENS,
             system=AGENTIC_SYSTEM_PROMPT,
-            tools=[RETRIEVE_TOOL] if offer_tools else [],
             messages=messages,
+            **create_kwargs,
         )
 
         if response.stop_reason == "end_turn":
@@ -230,11 +250,17 @@ def rag_agentic(
             # Append assistant turn (may include both text and tool_use blocks).
             messages.append({"role": "assistant", "content": response.content})
 
+            tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
+
+            # Run all retrieve() calls in this round in parallel (each hits Pinecone).
+            with ThreadPoolExecutor(max_workers=len(tool_use_blocks) or 1) as executor:
+                fetched = list(executor.map(
+                    lambda b: retrieve(b.input.get("query", ""), **retrieve_kwargs),
+                    tool_use_blocks,
+                ))
+
             tool_results = []
-            for block in response.content:
-                if block.type != "tool_use":
-                    continue
-                new_chunks = retrieve(block.input.get("query", ""), **retrieve_kwargs)
+            for block, new_chunks in zip(tool_use_blocks, fetched):
                 for c in new_chunks:
                     if c.chunk_id not in seen_ids:
                         all_chunks.append(c)
@@ -256,6 +282,28 @@ def rag_agentic(
         answer = next((b.text for b in response.content if hasattr(b, "text")), "[Response truncated]")
         break
 
+    if not answer:
+        # Final-round still produced no text — make a clean call with all accumulated chunks.
+        expanded = expand_query(question)
+        note = _terminology_note(question, expanded)
+        fallback_response = client.messages.create(
+            model=model,
+            max_tokens=MAX_TOKENS,
+            system=AGENTIC_SYSTEM_PROMPT,
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"CBA Excerpts:\n\n{_format_context(all_chunks)}\n\n"
+                    f"{note}Question: {question}\n\n"
+                    "Please provide a complete answer based on the excerpts above."
+                ),
+            }],
+        )
+        answer = next(
+            (b.text for b in fallback_response.content if hasattr(b, "text")),
+            "[No answer generated]",
+        )
+
     opik.update_current_span(metadata={"tool_calls_made": tool_calls_made})
     return {"answer": answer, "chunks": all_chunks, "tool_calls_made": tool_calls_made}
 
@@ -265,7 +313,7 @@ def rag_agentic(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Query NBA CBA with RAG.")
     parser.add_argument("question", help="Natural language question")
-    parser.add_argument("--top-k",   type=int, default=7, metavar="N")
+    parser.add_argument("--top-k",   type=int, default=10, metavar="N")
     parser.add_argument("--model",   default=DEFAULT_MODEL)
     parser.add_argument("--no-agent", action="store_true",
                         help="Use single-shot RAG instead of the agentic pipeline")
