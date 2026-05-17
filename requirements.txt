@@ -1,0 +1,11 @@
+pymupdf
+pinecone
+pinecone-text
+sentence-transformers
+python-dotenv
+anthropic
+jupyter
+matplotlib
+pandas
+numpy
+opik

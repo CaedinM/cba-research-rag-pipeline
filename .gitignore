@@ -1,0 +1,26 @@
+# Secrets
+.env.local
+
+# Virtual environments
+.venv/
+src/ingestion/.venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Data (large binary / generated)
+data/raw/
+data/processed/
+
+# Notebook outputs
+.ipynb_checkpoints/
+notebooks/outputs/
+
+# macOS
+.DS_Store
+
+# claude
+.claude
+CLAUDE.md
