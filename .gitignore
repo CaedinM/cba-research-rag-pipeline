@@ -2,7 +2,7 @@
 .env.local
 
 # Virtual environments
-.venv/
+.venv
 src/ingestion/.venv/
 
 # Python
