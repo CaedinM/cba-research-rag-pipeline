@@ -96,6 +96,19 @@ A cross-encoder reranker (`cross-encoder/ms-marco-MiniLM-L-6-v2`) is wired up bu
 
 Every `retrieve()`, `generate()`, and `rag*()` call is decorated with `@opik.track()`, so all pipeline runs — including ad-hoc queries — are logged to Opik automatically.
 
+**Caveat — training-data leakage:** The 2023 NBA CBA is a public document that predates Claude's training cutoff, so it is almost certainly present in the model's training data. This means Claude can answer many CBA questions from parametric memory alone, without relying on the retrieved excerpts. Two consequences for evaluation:
+
+- **Generation metrics are optimistic.** A correct, relevant answer doesn't prove the retrieval pipeline surfaced the right context — the model may have known the answer already. AnswerRelevance and KeyInfoPresent scores partly measure Claude's prior knowledge, not just this system's retrieval quality.
+- **Hallucination/grounding is harder to assess.** An answer can be factually correct yet not actually grounded in the provided chunks, which a grounding judge may still pass.
+
+The retrieval metrics (Hit@K, MRR, Recall@5) are unaffected — they measure the retriever directly against annotated ground truth and never touch the LLM. For a leakage-free read on the generation layer, the system should be evaluated against a corpus the model has *not* seen (e.g. a private or post-cutoff agreement), or with retrieval deliberately ablated to isolate its contribution.
+
+---
+
+## Next Steps
+
+The next logical step is to layer a graph database over the corpus, modeling the CBA's key concepts (defined terms, articles, sections) as nodes and its cross-references as edges. Because the CBA is a densely cross-referenced document, traversing these relationships at query time would pull in the supporting rules and definitions an answer depends on — even when they share little vocabulary with the question — improving retrieval quality on multi-hop questions.
+
 ---
 
 ## Stack
@@ -134,6 +147,8 @@ data/
 
 notebooks/
   tune_alpha.ipynb     — alpha grid search over eval set
+
+app.py                 — minimal Streamlit web UI over the RAG pipeline
 ```
 
 ## Quickstart
@@ -155,6 +170,9 @@ python ingest.py --pdf ../../data/raw/nba_cba_2023.pdf
 # Ask a question (agentic, default)
 cd ../..
 .venv/bin/python src/generation/generate.py "How do Bird Rights work?"
+
+# Or launch the web UI
+.venv/bin/streamlit run app.py
 
 # Single-shot mode
 .venv/bin/python src/generation/generate.py "What is the luxury tax threshold?" --no-agent
