@@ -2,7 +2,7 @@
 app.py — minimal Streamlit frontend for the NBA CBA 2023 RAG system.
 
 Run with:
-    .venv/bin/streamlit run app.py
+    .venv/bin/streamlit run src/app/app.py
 """
 
 import os
@@ -14,10 +14,12 @@ os.environ.setdefault("USE_TF", "0")
 import streamlit as st
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).parent / ".env.local")
+ROOT = Path(__file__).parent.parent.parent
 
-sys.path.insert(0, str(Path(__file__).parent / "src" / "generation"))
-sys.path.insert(0, str(Path(__file__).parent / "src" / "retrieval"))
+load_dotenv(ROOT / ".env.local")
+
+sys.path.insert(0, str(ROOT / "src" / "generation"))
+sys.path.insert(0, str(ROOT / "src" / "retrieval"))
 
 import anthropic
 from pinecone import Pinecone
