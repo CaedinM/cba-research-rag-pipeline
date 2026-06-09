@@ -140,6 +140,8 @@ src/
   eval/
     eval_retrieval.py  — 37-query retrieval sweep (Hit@K, MRR, Recall@5)
     opik_eval.py       — LLM-as-a-judge: AnswerRelevance, Hallucination, KeyInfoPresent
+  app/
+    app.py             — minimal Streamlit web UI over the RAG pipeline
 
 data/
   raw/                 — nba_cba_2023.pdf (gitignored)
@@ -147,8 +149,6 @@ data/
 
 notebooks/
   tune_alpha.ipynb     — alpha grid search over eval set
-
-app.py                 — minimal Streamlit web UI over the RAG pipeline
 ```
 
 ## Quickstart
@@ -172,7 +172,7 @@ cd ../..
 .venv/bin/python src/generation/generate.py "How do Bird Rights work?"
 
 # Or launch the web UI
-.venv/bin/streamlit run app.py
+.venv/bin/streamlit run src/app/app.py
 
 # Single-shot mode
 .venv/bin/python src/generation/generate.py "What is the luxury tax threshold?" --no-agent
